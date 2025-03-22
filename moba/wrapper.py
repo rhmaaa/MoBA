@@ -64,15 +64,29 @@ def moba_layer(
             dim=0,
             dtype=torch.int32,
         )
-        out = moba_impl(
-            q=query,
-            k=key,
-            v=value,
-            cu_seqlens=cu_seqlens_k,
-            max_seqlen=kv_len,
-            moba_chunk_size=moba_config.moba_chunk_size,
-            moba_topk=moba_config.moba_topk,
-        )
+        if moba_config.print_recall:
+            out = moba_impl(
+                q=query,
+                k=key,
+                v=value,
+                cu_seqlens=cu_seqlens_k,
+                max_seqlen=kv_len,
+                moba_chunk_size=moba_config.moba_chunk_size,
+                moba_topk=moba_config.moba_topk,
+                print_recall=moba_config.print_recall,
+                layer_name=moba_config.layer_names,
+                verbose=moba_config.verbose
+            )
+        else:
+            out = moba_impl(
+                q=query,
+                k=key,
+                v=value,
+                cu_seqlens=cu_seqlens_k,
+                max_seqlen=kv_len,
+                moba_chunk_size=moba_config.moba_chunk_size,
+                moba_topk=moba_config.moba_topk,
+            )
     else:
         # decode phase
         # TODO release paged attn implementation
