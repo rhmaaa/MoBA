@@ -1,0 +1,8 @@
+print recall
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:02,  1.00it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:01<00:01,  1.02it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:02<00:00,  1.04it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.49it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.28it/s]
+Traceback (most recent call last):
+  File "/root/workspace/work/MoBA/examples/llama.py", line 62, in <module>
+    filtered_token_ids = [token_ids for token_ids in all_token_ids if len(token_ids) >= seq_len]
+  File "/root/workspace/work/MoBA/examples/llama.py", line 62, in <listcomp>
+    filtered_token_ids = [token_ids for token_ids in all_token_ids if len(token_ids) >= seq_len]
+NameError: name 'seq_len' is not defined

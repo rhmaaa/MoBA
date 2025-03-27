@@ -34,8 +34,10 @@ if __name__ == "__main__":
     parser.add_argument('--seq_end', type=int, default=10000, help='序列长度结束值')
     parser.add_argument('--seq_step', type=int, default=1000, help='序列长度步长')
     parser.add_argument('--test_size', type=int, default=1, help='随机抽取的样本数量')
-
+    parser.add_argument('--seq_len', type=int, default=1000, help='序列长度')
+    
     args = parser.parse_args()
+    seq_len = args.seq_len
     if args.print_recall:
         print("print recall")
         register_moba(MoBAConfig(args.moba_chunk_size, 
@@ -67,26 +69,26 @@ if __name__ == "__main__":
     #     token_ids = random.choice(filtered_token_ids)
     #     samples.append(token_ids[:seq_len])
 # 根据参数设置序列长度范围
-    for seq_len in range(args.seq_start, args.seq_end + 1, args.seq_step):
-        filtered_token_ids = [token_ids for token_ids in all_token_ids if len(token_ids) >= seq_len]
-        # 随机抽取test_size个样本，截取到seq_len
-        samples = []
-        for _ in range(args.test_size):
-            token_ids = random.choice(filtered_token_ids)
-            samples.append(token_ids[:seq_len])
-        for i in range(0, len(samples)):
-            # import ipdb; ipdb.set_trace()
-            input_token_ids = samples[i]
-            input_length = len(input_token_ids)
-            input_ids = torch.tensor([input_token_ids], device=model.device)  # Add batch dimension
-            attention_mask = torch.ones_like(input_ids)
-            # with torch.cuda.amp.autocast():  # 使用混合精度训练
-            tokens = model.generate(
-                input_ids,
-                attention_mask=attention_mask,
-                max_length=seq_len+128,
-                do_sample=False
-            )
+    # for seq_len in range(args.seq_start, args.seq_end + 1, args.seq_step):
+    filtered_token_ids = [token_ids for token_ids in all_token_ids if len(token_ids) >= seq_len]
+    # 随机抽取test_size个样本，截取到seq_len
+    samples = []
+    for _ in range(args.test_size):
+        token_ids = random.choice(filtered_token_ids)
+        samples.append(token_ids[:seq_len])
+    for i in range(0, len(samples)):
+        # import ipdb; ipdb.set_trace()
+        input_token_ids = samples[i]
+        input_length = len(input_token_ids)
+        input_ids = torch.tensor([input_token_ids], device=model.device)  # Add batch dimension
+        attention_mask = torch.ones_like(input_ids)
+        # with torch.cuda.amp.autocast():  # 使用混合精度训练
+        tokens = model.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_length=seq_len+128,
+            do_sample=False
+        )
             
 
    

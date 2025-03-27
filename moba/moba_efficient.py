@@ -93,16 +93,137 @@ from einops import rearrange
 #     print(f"Average recall: {avg_recall}")
     
 #     return avg_recall
-def calculate_moba_recall(q, k, gate_top_k_idx, moba_chunk_size, top_k=None, layer_name=None, print_results=True, verbose=False):
+# def calculate_moba_recall(q, k, gate_top_k_idx, moba_chunk_size, moba_topk,top_k=None, layer_name=None, print_results=True, verbose=False):
+#     """
+#     计算 MOBA 选择的 token 相对于真实 Top K attention score 的召回率
+    
+#     参数:
+#     q: 查询张量，形状为 [seqlen, num_head, head_dim]
+#     k: 键张量，形状为 [seqlen, num_head, head_dim]
+#     gate_top_k_idx: MOBA 选择的块索引，形状为 [moba_topk - 1, num_head, seqlen]
+#     moba_chunk_size: 每个块的大小（包含的token数量）
+#     top_k: 计算真实 Top K 时的 K 值，默认为 moba_chunk_size * gate_top_k_idx.shape[-1]
+#     layer_name: 当前层的名称或索引，用于输出结果，默认为None
+#     print_results: 是否打印结果，默认为True
+#     verbose: 是否打印详细的计算过程信息，默认为False
+    
+#     返回:
+#     per_head_recall: 每个注意力头的平均召回率
+#     avg_recall: 所有头的平均召回率
+#     """
+    
+#     # 记录哪些block是被丢掉了  两者之间不一样的地方
+#     # import ipdb; ipdb.set_trace()
+#     start_time = time.time()
+    
+#     # 获取维度信息
+#     seqlen, num_head, head_dim = q.shape
+#     num_selected_chunks = gate_top_k_idx.shape[0]  # moba_topk
+    
+#     # 1. 将gate_top_k_idx转换为实际的token indices
+#     # gate_top_k_idx shape: [moba_topk-1, HEAD, SEQ]
+#     # 创建一个mask来标记被选中的tokens
+#     selected_tokens_mask = torch.zeros((seqlen, num_head, seqlen), dtype=torch.bool, device=q.device)
+    
+#     # 首先，为每个query位置添加其对应的当前chunk
+#     for seq_pos in range(seqlen):
+#         current_chunk_id = seq_pos // moba_chunk_size
+#         chunk_start = current_chunk_id * moba_chunk_size
+#         chunk_end = min((current_chunk_id + 1) * moba_chunk_size, seqlen)
+#         # 标记当前chunk中的所有token（对所有head都一样）
+#         selected_tokens_mask[seq_pos, :, chunk_start:chunk_end] = True
+    
+#     # 然后添加gate_top_k_idx选择的chunks
+#     for chunk_idx in range(num_selected_chunks):
+#         selected_chunks = gate_top_k_idx[chunk_idx]  # [HEAD, SEQ]
+#         for h in range(num_head):
+#             for seq_pos in range(seqlen):
+#                 chunk_id = selected_chunks[h, seq_pos]
+#                 start_pos = chunk_id * moba_chunk_size
+#                 end_pos = min((chunk_id + 1) * moba_chunk_size, seqlen)
+#                 # 标记这个chunk中的所有token
+#                 selected_tokens_mask[seq_pos, h, start_pos:end_pos] = True
+    
+#     if top_k is None:
+#         # 计算每个位置实际选中的token数量的平均值
+#         avg_selected_tokens = selected_tokens_mask.sum(-1).float().mean().item()
+#         print(f"Average selected tokens per position: {avg_selected_tokens:.1f}")
+#         # 使用实际选中token数量的2%作为top_k
+#         top_k = max(int(avg_selected_tokens * 0.02), 1)
+#         print(f"Using top_k = {top_k}")
+#     top_k = max(int(avg_selected_tokens * 0.02), 1)
+#     print("moba_chunk_size", moba_chunk_size)
+#     print("moba_topk", moba_topk)
+#     print("seqlen", seqlen)
+#     # 1. 计算真实的注意力分数矩阵
+#     attn_scores = torch.matmul(q, k.transpose(1, 2))  # [seqlen, num_head, seqlen]
+    
+#     # 2. 对于每个查询token和每个头，获取真实的Top K token索引
+#     true_topk_values, true_topk_indices = torch.topk(attn_scores, k=top_k, dim=-1)  # [seqlen, num_head, top_k]
+    
+#     # 3. 计算召回率
+#     # 创建一个mask来标记真实的top-k tokens
+#     true_topk_mask = torch.zeros_like(selected_tokens_mask)
+#     for q_idx in range(seqlen):
+#         for h_idx in range(num_head):
+#             true_topk_mask[q_idx, h_idx, true_topk_indices[q_idx, h_idx]] = True
+    
+#     # 计算每个查询和每个头的交集
+#     intersection = (selected_tokens_mask & true_topk_mask).sum(dim=-1)  # [seqlen, num_head]
+    
+#     # 计算每个头的平均召回率
+#     per_head_recall = (intersection.float() / top_k).mean(dim=0)  # [num_head]
+    
+#     # 计算总体平均召回率
+#     avg_recall = per_head_recall.mean().item()
+    
+#     # 计算每个头选择的token数量
+#     selected_tokens_per_head = selected_tokens_mask.sum(-1).float().mean(0)  # [num_head]
+    
+#     # 计算理论上的计算节省
+#     full_attn_pairs = seqlen * seqlen
+#     moba_attn_pairs = selected_tokens_per_head.mean().item() * seqlen
+#     reduction = (1 - moba_attn_pairs/full_attn_pairs) * 100
+    
+#     # 计算耗时
+#     elapsed_time = time.time() - start_time
+    
+#     # 打印每层的召回率结果
+#     if print_results:
+#         layer_info = f"Layer {layer_name}" if layer_name is not None else "Current layer"
+#         print(f"\n{layer_info} Recall Results:")
+#         print(f"Average recall across all heads: {avg_recall:.4f}")
+#         if verbose:
+#             print("Per-head recall rates:")
+#             for h_idx, recall in enumerate(per_head_recall):
+#                 print(f"  Head {h_idx}: {recall:.4f}")
+#             print(f"Computation time: {elapsed_time:.4f} seconds")
+        
+#             # 额外详细信息
+#             moba_token_count = sum(len(moba_selected_tokens[0][h]) for h in range(num_head)) / num_head
+#             print(f"MOBA selected ~{moba_token_count:.1f} tokens per head on average")
+#             print(f"True Top-K used: {top_k}")
+            
+#             # 计算理论上的计算节省
+#             full_attn_pairs = seqlen * seqlen
+#             moba_attn_pairs = moba_token_count * seqlen
+#             reduction = (1 - moba_attn_pairs/full_attn_pairs) * 100
+#             print(f"Computational reduction: ~{reduction:.1f}% compared to full attention")
+    
+#     return per_head_recall, avg_recall
+
+
+def calculate_moba_recall(q, k, gate_top_k_idx, moba_chunk_size, moba_topk, top_k=None, layer_name=None, print_results=True, verbose=False):
     """
     计算 MOBA 选择的 token 相对于真实 Top K attention score 的召回率
     
     参数:
     q: 查询张量，形状为 [seqlen, num_head, head_dim]
     k: 键张量，形状为 [seqlen, num_head, head_dim]
-    gate_top_k_idx: MOBA 选择的块索引，形状为 [batch, num_head, moba_topk]
+    gate_top_k_idx: MOBA 选择的块索引，形状为 [moba_topk - 1, num_head, seqlen]
     moba_chunk_size: 每个块的大小（包含的token数量）
-    top_k: 计算真实 Top K 时的 K 值，默认为 moba_chunk_size * gate_top_k_idx.shape[-1]
+    moba_topk: 总共选择的块数量（包括当前块）
+    top_k: 计算真实 Top K 时的 K 值，默认为None（会基于选中的令牌数自动计算）
     layer_name: 当前层的名称或索引，用于输出结果，默认为None
     print_results: 是否打印结果，默认为True
     verbose: 是否打印详细的计算过程信息，默认为False
@@ -111,112 +232,143 @@ def calculate_moba_recall(q, k, gate_top_k_idx, moba_chunk_size, top_k=None, lay
     per_head_recall: 每个注意力头的平均召回率
     avg_recall: 所有头的平均召回率
     """
+    
+    # 移除调试断点
+    import time
     start_time = time.time()
+    moba_topk = moba_topk + 1
     
     # 获取维度信息
     seqlen, num_head, head_dim = q.shape
-    batch_size = gate_top_k_idx.shape[0]
-    moba_topk = gate_top_k_idx.shape[-1]
+    num_chunks = (seqlen + moba_chunk_size - 1) // moba_chunk_size  # 总块数（向上取整）
     
+    # 确认gate_top_k_idx形状正确
+    assert gate_top_k_idx.shape[0] == moba_topk - 1, f"gate_top_k_idx应有{moba_topk - 1}个选择的块，但实际有{gate_top_k_idx.shape[0]}个"
+    assert gate_top_k_idx.shape[1] == num_head, f"gate_top_k_idx的头数应为{num_head}，但实际为{gate_top_k_idx.shape[1]}"
+    assert gate_top_k_idx.shape[2] == seqlen, f"gate_top_k_idx的序列长度应为{seqlen}，但实际为{gate_top_k_idx.shape[2]}"
+    
+    # 1. 创建一个mask来标记被MOBA选中的tokens
+    selected_tokens_mask = torch.zeros((seqlen, num_head, seqlen), dtype=torch.bool, device=q.device)
+    
+    # 首先，为每个query位置添加其对应的当前chunk
+    for seq_pos in range(seqlen):
+        current_chunk_id = seq_pos // moba_chunk_size
+        chunk_start = current_chunk_id * moba_chunk_size
+        chunk_end = min((current_chunk_id + 1) * moba_chunk_size, seqlen)
+        # 标记当前chunk中的所有token（对所有head都一样）
+        selected_tokens_mask[seq_pos, :, chunk_start:chunk_end] = True
+    
+    # 然后添加gate_top_k_idx选择的chunks
+    for chunk_idx in range(moba_topk - 1):  # gate_top_k_idx中有moba_topk-1个额外选择的块
+        selected_chunks = gate_top_k_idx[chunk_idx]  # [num_head, seqlen]
+        for h in range(num_head):
+            for seq_pos in range(seqlen):
+                chunk_id = selected_chunks[h, seq_pos]
+                # 确保chunk_id是有效的
+                if 0 <= chunk_id < num_chunks:
+                    start_pos = chunk_id * moba_chunk_size
+                    end_pos = min((chunk_id + 1) * moba_chunk_size, seqlen)
+                    # 标记这个chunk中的所有token
+                    selected_tokens_mask[seq_pos, h, start_pos:end_pos] = True
+    
+    # 计算每个位置实际选中的token数量的平均值
+    avg_selected_tokens = selected_tokens_mask.sum(-1).float().mean().item()
+    top_k = max(int(seqlen * 0.02), 1)
     if top_k is None:
-        # 默认 top_k 为 MOBA 选择的总 token 数量（近似值）
-        top_k = min(moba_chunk_size * moba_topk, seqlen)
+        print(f"Average selected tokens per position: {avg_selected_tokens:.1f}")
+        # 使用实际选中token数量的2%作为top_k
+        top_k = max(int(avg_selected_tokens * 0.02), 1)
+    print(f"Using top_k = {top_k}")
     
-    # 1. 计算真实的注意力分数矩阵（不应用softmax，只需要相对大小）
-    # 形状: [seqlen, num_head, seqlen]
-    attn_scores = torch.matmul(q, k.transpose(1, 2))
+    if verbose:
+        print("moba_chunk_size:", moba_chunk_size)
+        print("moba_topk:", moba_topk)
+        print("seqlen:", seqlen)
+        print("num_chunks:", num_chunks)
     
-    # 2. 对于每个查询 token 和每个头，获取真实的 Top K token 索引
-    # 形状: [seqlen, num_head, top_k]
-    true_topk_indices = torch.topk(attn_scores, k=top_k, dim=-1).indices
+    # 2. 计算真实的注意力分数矩阵
+    # 调整维度顺序为 [num_head, seqlen, head_dim]
+    q = q.transpose(0, 1)  # [num_head, seqlen, head_dim]
+    k = k.transpose(0, 1)  # [num_head, seqlen, head_dim]
     
-    # 3. 从 gate_top_k_idx 计算 MOBA 选择的 token 索引
-    # 假设 gate_top_k_idx 中的值是块索引，范围是 [0, num_chunks)
+    # 计算注意力分数：Q @ K^T
+    # attn_scores: [num_head, seqlen, seqlen]
+    attn_scores = torch.matmul(q, k.transpose(-2, -1))
     
-    # 创建一个空的集合列表，每个查询 token 和注意力头一个集合
-    moba_selected_tokens = [[set() for _ in range(num_head)] for _ in range(seqlen)]
-    true_topk_token_sets = [[set() for _ in range(num_head)] for _ in range(seqlen)]
+    # 3. 对每个查询token和每个头，获取真实的Top K token索引
+    # 确保 top_k 不超过序列长度
+    top_k = min(top_k, attn_scores.size(-1))
     
-    # 填充真实 Top K token 集合
+    # 在最后一个维度（键的维度）上取 top_k
+    # 输出的 true_topk_indices: [num_head, seqlen, top_k]
+    true_topk_values, true_topk_indices = torch.topk(attn_scores, k=top_k, dim=-1)
+    
+    # 调整回原始维度顺序 [seqlen, num_head, top_k]
+    true_topk_indices = true_topk_indices.transpose(0, 1)
+    
+    # 4. 计算召回率
+    # 创建一个mask来标记真实的top-k tokens
+    true_topk_mask = torch.zeros_like(selected_tokens_mask)
     for q_idx in range(seqlen):
         for h_idx in range(num_head):
-            true_topk_token_sets[q_idx][h_idx] = set(true_topk_indices[q_idx, h_idx].tolist())
+            true_topk_mask[q_idx, h_idx, true_topk_indices[q_idx, h_idx]] = True
     
-    # 从块索引计算对应的 token 索引并填充 MOBA 选择的 token 集合
-    for b_idx in range(batch_size):
-        for h_idx in range(num_head):
-            for q_idx in range(seqlen):
-                # 获取当前查询选择的块索引
-                selected_chunks = gate_top_k_idx[b_idx, h_idx].tolist()
-                
-                # 为每个块添加相应的 token 索引
-                for chunk_idx in selected_chunks:
-                    chunk_start = chunk_idx * moba_chunk_size
-                    # 确保不超过序列长度
-                    chunk_end = min((chunk_idx + 1) * moba_chunk_size, seqlen)
-                    # 添加该块中的所有 token
-                    moba_selected_tokens[q_idx][h_idx].update(range(chunk_start, chunk_end))
-    
-    # 4. 计算每个查询 token 和头的召回率
-    # 为每个头准备一个累加器
-    head_total_recall = [0.0] * num_head
-    head_count = [0] * num_head
-    
-    for q_idx in range(seqlen):
-        for h_idx in range(num_head):
-            true_topk = true_topk_token_sets[q_idx][h_idx]
-            moba_selected = moba_selected_tokens[q_idx][h_idx]
-            
-            if len(true_topk) > 0:  # 避免除零错误
-                # 计算交集大小
-                intersection = len(true_topk.intersection(moba_selected))
-                
-                # 计算召回率
-                recall = intersection / len(true_topk)
-                head_total_recall[h_idx] += recall
-                head_count[h_idx] += 1
+    # 计算每个查询和每个头的交集
+    intersection = (selected_tokens_mask & true_topk_mask).sum(dim=-1)  # [seqlen, num_head]
     
     # 计算每个头的平均召回率
-    per_head_recall = []
-    for h_idx in range(num_head):
-        if head_count[h_idx] > 0:
-            per_head_recall.append(head_total_recall[h_idx] / head_count[h_idx])
-        else:
-            per_head_recall.append(0.0)
+    per_head_recall = (intersection.float() / top_k).mean(dim=0)  # [num_head]
     
     # 计算总体平均召回率
-    total_recall = sum(head_total_recall)
-    count = sum(head_count)
-    avg_recall = total_recall / count if count > 0 else 0.0
+    avg_recall = per_head_recall.mean().item()
+    
+    # 计算每个头选择的token数量
+    selected_tokens_per_head = selected_tokens_mask.sum(-1).float().mean(0)  # [num_head]
+    
+    # 计算理论上的计算节省
+    full_attn_pairs = seqlen * seqlen
+    moba_attn_pairs = selected_tokens_per_head.mean().item() * seqlen
+    reduction = (1 - moba_attn_pairs/full_attn_pairs) * 100
     
     # 计算耗时
     elapsed_time = time.time() - start_time
     
     # 打印每层的召回率结果
-    if print_results:
-        layer_info = f"Layer {layer_name}" if layer_name is not None else "Current layer"
-        print(f"\n{layer_info} Recall Results:")
-        print(f"Average recall across all heads: {avg_recall:.4f}")
-        if verbose:
-            print("Per-head recall rates:")
-            for h_idx, recall in enumerate(per_head_recall):
-                print(f"  Head {h_idx}: {recall:.4f}")
-            print(f"Computation time: {elapsed_time:.4f} seconds")
-        
-            # 额外详细信息
-            moba_token_count = sum(len(moba_selected_tokens[0][h]) for h in range(num_head)) / num_head
-            print(f"MOBA selected ~{moba_token_count:.1f} tokens per head on average")
-            print(f"True Top-K used: {top_k}")
+    # if print_results:
+    #     layer_info = f"Layer {layer_name}" if layer_name is not None else "Current layer"
+    #     print(f"\n{layer_info} Recall Results:")
+    #     print(f"Average recall across all heads: {avg_recall:.4f}")
+    #     if verbose:
+    #         print("Per-head recall rates:")
+    #         for h_idx, recall in enumerate(per_head_recall):
+    #             print(f"  Head {h_idx}: {recall:.4f}")
+    #         print(f"Computation time: {elapsed_time:.4f} seconds")
             
-            # 计算理论上的计算节省
-            full_attn_pairs = seqlen * seqlen
-            moba_attn_pairs = moba_token_count * seqlen
-            reduction = (1 - moba_attn_pairs/full_attn_pairs) * 100
-            print(f"Computational reduction: ~{reduction:.1f}% compared to full attention")
+    #         # 额外详细信息
+    #         print(f"MOBA selected ~{avg_selected_tokens:.1f} tokens per head on average")
+    #         print(f"True Top-K used: {top_k}")
+            
+    #         # 计算理论上的计算节省
+    #         print(f"Computational reduction: ~{reduction:.1f}% compared to full attention")
+    import csv
+    import os
     
+    # 创建文件名
+    path="/public/dolma/result/"
+    filename = f"{path}{seqlen}_{moba_chunk_size}_{moba_topk}.csv"
+    file_exists = os.path.isfile(filename)
+    
+    with open(filename, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        
+        # 如果文件不存在，写入标题行
+        if not file_exists:
+            headers = ['average_recall']
+            writer.writerow(headers)
+        
+        # 只写入平均召回率
+        writer.writerow([round(avg_recall, 4)])
     return per_head_recall, avg_recall
-
-
 
 
 @lru_cache(maxsize=16)
@@ -261,6 +413,7 @@ def calc_chunks(cu_seqlen, moba_chunk_size):
         (num_chunk,), dtype=torch.bool, device=cu_seqlen.device
     )
     chunk_to_remain[chunk_to_remove] = False
+    # 这里保存的就是对应的chunk的序列  
     filtered_chunk_indices = chunk_to_remain.nonzero(as_tuple=True)[0]
     num_filtered_chunk = len(filtered_chunk_indices)
 
@@ -506,7 +659,7 @@ def moba_attn_varlen(
     Returns:
         attn_output (torch.Tensor): [seqlen, head, head_dim]
     """
-
+    # import ipdb; ipdb.set_trace()
     kv = torch.stack((k, v), dim=1)
 
     """ some basic variables """
@@ -577,7 +730,7 @@ def moba_attn_varlen(
     # 添加召回率计算
     if print_recall:
         per_head_recall, avg_recall = calculate_moba_recall(
-            q, k, gate_top_k_idx, moba_chunk_size, 
+            q, k, gate_top_k_idx, moba_chunk_size, moba_topk,
             layer_name=layer_name, verbose=verbose
         )
     # apply causal mask
