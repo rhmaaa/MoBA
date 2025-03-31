@@ -3,8 +3,9 @@
 
 # 设置实验参数
 CHUNK_SIZES=(4 8 16 32 64 128 256)
+# TOPK_VALUES=(1 2 4 8 16 32 64 128)
 TOPK_VALUES=(128)
-SEQ_LENs=(2000 4000 6000 8000 10000 12000 14000 16000)
+SEQ_LENs=(3000)
 
 # 创建结果目录
 RESULTS_DIR="moba_results"
@@ -24,7 +25,6 @@ for seq_len in "${SEQ_LENs[@]}"; do
     
     # 运行实验
     echo "开始实验: chunk_size=$chunk_size, topk=$topk, 时间: $(date)" >> $RESULTS_DIR/experiment_log.txt
-    
     model_path="/public/Qwen/Qwen2.5-1.5B-Instruct"
     
     # 执行命令并记录输出
@@ -35,7 +35,7 @@ for seq_len in "${SEQ_LENs[@]}"; do
       --model $model_path
       
 
-    s
+    
     # 检查是否成功
     if [ $? -eq 0 ]; then
       echo "实验完成: chunk_size=$chunk_size, topk=$topk, 时间: $(date)" >> $RESULTS_DIR/experiment_log.txt
