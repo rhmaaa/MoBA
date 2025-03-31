@@ -54,7 +54,9 @@ We provide a transformers-friendly implementation for MoBA.
 Feel free to choose attention backends by `--attn` between `moba` and `moba_naive`.
 
 ```bash
-python3 examples/llama.py --model meta-llama/Llama-3.1-8B --attn moba
+# python3 examples/llama.py --model meta-llama/Llama-3.1-8B --attn moba
+bash run2.sh
+**result save**： MoBA/moba/moba_efficient.py：L329 
 ```
 
 ### Implementation Details
